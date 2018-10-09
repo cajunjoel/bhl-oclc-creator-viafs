@@ -23,121 +23,129 @@ if (!file_exists($dest)) {
   mkdir($dest);
 }
 
-// Prepare for counting!
-$lines = line_count($title_id_source);
-$count = 0;
-$pause_count = 0;
-$fp = fopen($title_id_source, 'r');
-$filename = null;
-fgetcsv($fp, 0, "\t");
+// This is faster for testing if we can pull from a cache;
+if (file_exists('compare-cache.txt')) {
+  print "Using data cache for speeeeeeed!!!\n";
+  $titles = unserialize(file_get_contents('compare-cache.txt'));
 
-while ($data = fgetcsv($fp, 0, "\t")) {
-  // Get some info from the file
-  $title_id = $data[0];
-  $id_type = $data[1];
-  $id = $data[2];
+} else {
 
-  // Do we care about this record?
-  if (count($data) < 4 || $id_type != 'OCLC') { $count++; continue; }
+  $lines = line_count($title_id_source);
+  $count = 0;
+  $pause_count = 0;
+  $fp = fopen($title_id_source, 'r');
+  $filename = null;
+  fgetcsv($fp, 0, "\t");
 
-  $titles[$title_id]['oclc_number'] = $id;
+  while ($data = fgetcsv($fp, 0, "\t")) {
+    // Get some info from the file
+    $title_id = $data[0];
+    $id_type = $data[1];
+    $id = $data[2];
 
-  // Are we interested in this identifier?
-  $filename = "{$id}.rdf";
+    // Do we care about this record?
+    if (count($data) < 4 || $id_type != 'OCLC') { $count++; continue; }
 
-  // Let's be nice and not beat up their servers too much.
-  if (!file_exists("{$dest}/{$filename}")) {
-    print "Getting {$filename} (TitleID = $title_id)\n";
+    $titles[$title_id]['oclc_number'] = $id;
 
-    // Download and save the RDF in one swell foop
-    file_put_contents("{$dest}/{$filename}", file_get_contents("http://experiment.worldcat.org/oclc/{$filename}"));
+    // Are we interested in this identifier?
+    $filename = "{$id}.rdf";
 
-    // Let's be extra nice. Every 30th download, we rest for 10 seconds
-    if ($pause_count % 30 == 0) {
-      sleep(10);
-    }
-    $pause_count++;
-  }
+    // Let's be nice and not beat up their servers too much.
+    if (!file_exists("{$dest}/{$filename}")) {
+      print "Getting {$filename} (TitleID = $title_id)\n";
 
-  print chr(13).'('.(int)($count/$lines*100)."%) ";
-  $txt = '<?xml version="1.0"?'.'>'."\n".file_get_contents("{$dest}/{$filename}");
-  if (strlen($txt) > 30) {
-    $rdf = new DomDocument;
-    $rdf->loadXml($txt);
+      // Download and save the RDF in one swell foop
+      file_put_contents("{$dest}/{$filename}", file_get_contents("http://experiment.worldcat.org/oclc/{$filename}"));
 
-    $xph = new DOMXPath($rdf);
-    $xph->registerNamespace('rdf', "http://www.w3.org/1999/02/22-rdf-syntax-ns#");
-    // Get the things that are about the OCLC number we are interestd in
-
-    foreach($xph->query('//rdf:Description[@rdf:about[contains(.,\'http://www.worldcat.org/oclc/'.$id.'\')]]') as $node) {
-
-  
-      // Get the OCLC title
-      $titles[$title_id]['oclc_title'] = $node->getElementsByTagName('name')[0]->textContent;
-  
-      // Find the "contributors"
-      $contributors = $node->getElementsByTagName('contributor');
-      foreach ($contributors as $c) {
-        $viaf = $c->getAttribute('rdf:resource');
-    
-        $c2 = $xph->query('//rdf:Description[@rdf:about="'.$viaf .'"]');
-        $c2 = $c2[0];
-        if ($c2) {
-          $name       = $c2->getElementsByTagName('name');
-          $familyName = $c2->getElementsByTagName('familyName');
-          $givenName  = $c2->getElementsByTagName('givenName');
-          $birthDate  = $c2->getElementsByTagName('birthDate');
-          $deathDate  = $c2->getElementsByTagName('deathDate');
-          $type       = $c2->getElementsByTagName('type');
-          $type       = $type[0]->getAttribute('rdf:resource');
-    
-          $titles[$title_id]['oclc_authors'][] = array(
-            'viaf' => preg_replace('|http://viaf.org/viaf/|', '', $viaf),
-            'type' => preg_replace('|http://schema.org/|', '', $type),
-            'name' => (count($name) > 0 ? @$name[0]->textContent : ''),
-            'familyName' => (count($familyName) > 0 ? @$familyName[0]->textContent : ''),
-            'givenName' => (count($givenName) > 0 ? @$givenName[0]->textContent : ''),
-            'birthDate' => (count($birthDate) > 0 ? @$birthDate[0]->textContent : ''),
-            'deathDate' => (count($deathDate) > 0 ? @$deathDate[0]->textContent : ''),
-            'matched' => '',
-          );          
-        }   
+      // Let's be extra nice. Every 30th download, we rest for 10 seconds
+      if ($pause_count % 30 == 0) {
+        sleep(10);
       }
-      // Find the "creators"
-      $creators = $node->getElementsByTagName('creator');
-      foreach ($creators as $c) {
-        $viaf = $c->getAttribute('rdf:resource');
+      $pause_count++;
+    }
+
+    print chr(13).'('.(int)($count/$lines*100)."%) ";
+    $txt = '<?xml version="1.0"?'.'>'."\n".file_get_contents("{$dest}/{$filename}");
+    if (strlen($txt) > 30) {
+      $rdf = new DomDocument;
+      $rdf->loadXml($txt);
+
+      $xph = new DOMXPath($rdf);
+      $xph->registerNamespace('rdf', "http://www.w3.org/1999/02/22-rdf-syntax-ns#");
+      // Get the things that are about the OCLC number we are interestd in
+
+      foreach($xph->query('//rdf:Description[@rdf:about[contains(.,\'http://www.worldcat.org/oclc/'.$id.'\')]]') as $node) {
+
+  
+        // Get the OCLC title
+        $titles[$title_id]['oclc_title'] = $node->getElementsByTagName('name')[0]->textContent;
+  
+        // Find the "contributors"
+        $contributors = $node->getElementsByTagName('contributor');
+        foreach ($contributors as $c) {
+          $viaf = $c->getAttribute('rdf:resource');
     
-        $c2 = $xph->query('//rdf:Description[@rdf:about="'.$viaf .'"]');
-        $c2 = $c2[0];
+          $c2 = $xph->query('//rdf:Description[@rdf:about="'.$viaf .'"]');
+          $c2 = $c2[0];
+          if ($c2) {
+            $name       = $c2->getElementsByTagName('name');
+            $familyName = $c2->getElementsByTagName('familyName');
+            $givenName  = $c2->getElementsByTagName('givenName');
+            $birthDate  = $c2->getElementsByTagName('birthDate');
+            $deathDate  = $c2->getElementsByTagName('deathDate');
+            $type       = $c2->getElementsByTagName('type');
+            $type       = $type[0]->getAttribute('rdf:resource');
     
-        if ($c2) {
-          $name       = $c2->getElementsByTagName('name');
-          $familyName = $c2->getElementsByTagName('familyName');
-          $givenName  = $c2->getElementsByTagName('givenName');
-          $birthDate  = $c2->getElementsByTagName('birthDate');
-          $deathDate  = $c2->getElementsByTagName('deathDate');
-          $type       = $c2->getElementsByTagName('type');
-          $type       = $type[0]->getAttribute('rdf:resource');
+            $titles[$title_id]['oclc_authors'][] = array(
+              'viaf' => preg_replace('|http://viaf.org/viaf/|', '', $viaf),
+              'type' => preg_replace('|http://schema.org/|', '', $type),
+              'name' => (count($name) > 0 ? @$name[0]->textContent : ''),
+              'familyName' => (count($familyName) > 0 ? @$familyName[0]->textContent : ''),
+              'givenName' => (count($givenName) > 0 ? @$givenName[0]->textContent : ''),
+              'birthDate' => (count($birthDate) > 0 ? @$birthDate[0]->textContent : ''),
+              'deathDate' => (count($deathDate) > 0 ? @$deathDate[0]->textContent : ''),
+              'matched' => '',
+            );          
+          }   
+        }
+        // Find the "creators"
+        $creators = $node->getElementsByTagName('creator');
+        foreach ($creators as $c) {
+          $viaf = $c->getAttribute('rdf:resource');
     
-          $titles[$title_id]['oclc_authors'][] = array(
-            'viaf' => preg_replace('|http://viaf.org/viaf/|', '', $viaf),
-            'type' => preg_replace('|http://schema.org/|', '', $type),
-            'name' => (count($name) > 0 ? @$name[0]->textContent : ''),
-            'familyName' => (count($familyName) > 0 ? @$familyName[0]->textContent : ''),
-            'givenName' => (count($givenName) > 0 ? @$givenName[0]->textContent : ''),
-            'birthDate' => (count($birthDate) > 0 ? @$birthDate[0]->textContent : ''),
-            'deathDate' => (count($deathDate) > 0 ? @$deathDate[0]->textContent : ''),
-            'matched' => '',
-          );          
+          $c2 = $xph->query('//rdf:Description[@rdf:about="'.$viaf .'"]');
+          $c2 = $c2[0];
+    
+          if ($c2) {
+            $name       = $c2->getElementsByTagName('name');
+            $familyName = $c2->getElementsByTagName('familyName');
+            $givenName  = $c2->getElementsByTagName('givenName');
+            $birthDate  = $c2->getElementsByTagName('birthDate');
+            $deathDate  = $c2->getElementsByTagName('deathDate');
+            $type       = $c2->getElementsByTagName('type');
+            $type       = $type[0]->getAttribute('rdf:resource');
+    
+            $titles[$title_id]['oclc_authors'][] = array(
+              'viaf' => preg_replace('|http://viaf.org/viaf/|', '', $viaf),
+              'type' => preg_replace('|http://schema.org/|', '', $type),
+              'name' => (count($name) > 0 ? @$name[0]->textContent : ''),
+              'familyName' => (count($familyName) > 0 ? @$familyName[0]->textContent : ''),
+              'givenName' => (count($givenName) > 0 ? @$givenName[0]->textContent : ''),
+              'birthDate' => (count($birthDate) > 0 ? @$birthDate[0]->textContent : ''),
+              'deathDate' => (count($deathDate) > 0 ? @$deathDate[0]->textContent : ''),
+              'matched' => '',
+            );          
+          }
         }
       }
     }
+    $count++;
   }
-  $count++;
+  print chr(13)."(100%)    \n";
+  fclose($fp);
+  file_put_contents('compare-cache.txt', serialize($titles));
 }
-print chr(13)."(100%)    \n";
-fclose($fp);
 
 // Almost done!  
 export_results($titles);
@@ -208,7 +216,7 @@ function export_results($titles) {
   // Print the results:
   print "Exporting results...";
   $fout = fopen('titles-viaf.csv','w');
-  fwrite($fout, 'BHL ID, OCLC Number, BHL Title, OCLC Title, BHL Author, OCLC VIAF, OCLC Name, OCLC givenName, OCLC familyName, OCLC birthDate, OCLC deathDate'."\n");
+  fwrite($fout, chr(239) . chr(187) . chr(191) .'BHL ID, OCLC Number, BHL Title, OCLC Title, BHL Author, OCLC VIAF, OCLC Name, OCLC givenName, OCLC familyName, OCLC birthDate, OCLC deathDate'."\n");
 
   // Loop through the titles
   foreach ($titles as $t) {
@@ -231,25 +239,32 @@ function export_results($titles) {
         // Skip over things we've already matched
         if (!$t['oclc_authors'][$i]['matched']) {
           
-          // Strip the date string from the BHL Author
-          $bhl_author = preg_replace('/\d\d\d\d.*?(\d\d\d\d)?$/','',$bhl_author);
-          
+          // Strip the date string from the BHL Author and make it FIRSTNAME LASTNAME
+          $normalized_bhl_author = explode(',', $bhl_author);
+          for ($n = 0; $n < count($normalized_bhl_author); $n++) {
+            $normalized_bhl_author[$n] = trim($normalized_bhl_author[$n]);
+            if (preg_match('/\d{3}/', $normalized_bhl_author[$n])) {
+              unset($normalized_bhl_author[$n]);
+            }
+          }
+          $nba = trim(array_shift($normalized_bhl_author));
+          $nba = trim(implode(', ', $normalized_bhl_author).' '.$nba);
+                    
           // Calculate how "different" the two creator strings are
-          $diff = levenshtein_utf8($bhl_author, $t['oclc_authors'][$i]['name']);
-          
+          $diff = levenshtein_utf8($nba, $t['oclc_authors'][$i]['name']);
           // If they are "too much different" then we see if the OCLC Author contains the BHL Author string
-          if ($diff > 20) {
-            $haystack = preg_replace('/[^a-z0-9]/i','',$bhl_author);
+          if ($diff > 5) {
+            $haystack = preg_replace('/[^a-z0-9]/i','',$nba);
             $needle = preg_replace('/[^a-z0-9]/i','',$t['oclc_authors'][$i]['name']);
             if ($haystack && $needle) {
-              $res = strpos(strtolower($needle), strtolower($needle));
+              $res = strpos(strtolower($haystack), strtolower($needle));
               if ($res !== false && $res >= 0) {
-                $diff = 0;
+                $diff = -2;
               }
             }
           }
           // If there was a match (or an approximate match) we add the info to the CSV
-          if ($diff <= 20) {
+          if ($diff <= 5) {
             $t['oclc_authors'][$i]['matched'] = 1;
             $csv[] = $t['oclc_authors'][$i]['viaf'];
             $csv[] = $t['oclc_authors'][$i]['name'];
